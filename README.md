@@ -6,7 +6,7 @@
 [![Releases](https://img.shields.io/github/v/release/octu0/go-xeve)](https://github.com/octu0/go-xeve/releases)
 
 Go bindings for [mpeg5/xeve](https://github.com/mpeg5/xeve)  
-MPEG-5 EVC decoder.
+MPEG-5 EVC encoder.
 
 ## Requirements
 
