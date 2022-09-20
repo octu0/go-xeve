@@ -21,7 +21,6 @@ func createParam(width, height int) *xeve.BaselineParam {
 
 	param.SetPresetTune(xeve.PresetFast, xeve.TuneNone)
 	param.SetInputSize(width, height)
-	param.SetInputColorFormat(xeve.ColorFormatYCbCr420, 8)
 	param.SetFramerate(30, 60)
 	param.SetBitrate(2000)
 	param.SetGOP(xeve.GOPClosed)
@@ -65,12 +64,14 @@ func main() {
 			panic(err)
 		}
 		nal, err := encoder.Encode(
-			img.Y,       // Y plane
-			img.Cb,      // U plane
-			img.Cr,      // V plane
-			img.YStride, // Y stride
-			img.CStride, // U stride
-			img.CStride, // V stride
+			img.Y,                    // Y plane
+			img.Cb,                   // U plane
+			img.Cr,                   // V plane
+			img.YStride,              // Y stride
+			img.CStride,              // U stride
+			img.CStride,              // V stride
+			xeve.ColorFormatYCbCr420, // YUV 420
+			xeve.BitDepth8,           // 8bit
 		)
 		if err != nil {
 			panic(err)
@@ -95,6 +96,20 @@ func main() {
 		}
 		num += 1
 	}
+
+	nal, err := encoder.Flush()
+	if err != nil {
+		panic(err)
+	}
+	defer nal.Close()
+
+	if nal.HasData() {
+		fmt.Printf("[flush] Frame:%s Slice:%s Data:%v(%d)\n", nal.NALUnit, nal.Slice, nal.Data[0:10], len(nal.Data))
+		if output {
+			out.Write(nal.Data)
+		}
+	}
+
 	if output {
 		out.Sync()
 	}

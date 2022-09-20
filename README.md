@@ -39,18 +39,21 @@ func main() {
 	}
 	defer encoder.Close()
 
+	out := newBitstreamWriter()
 	for {
 		img, err := loadExampleData()
 		if err != nil {
 			panic(err)
 		}
 		nal, err := encoder.Encode(
-			img.Y,       // Y plane
-			img.Cb,      // U plane
-			img.Cr,      // V plane
-			img.YStride, // Y stride
-			img.CStride, // U stride
-			img.CStride, // V stride
+			img.Y,                    // Y plane
+			img.Cb,                   // U plane
+			img.Cr,                   // V plane
+			img.YStride,              // Y stride
+			img.CStride,              // U stride
+			img.CStride,              // V stride
+			xeve.ColorFormatYCbCr420, // YUV 420
+			xeve.BitDepth8,           // 8bit
 		)
 		if err != nil {
 			panic(err)
@@ -61,16 +64,30 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("[%d] Frame:%s Slice:%s Data:%v(%d)\n", num, nal.NALUnit, nal.Slice, nal.Data[0:10], len(nal.Data))
-		// => [0] Frame:IDR Slice:I Data:[0 0 0 21 50 0 128 0 0 0](1234567)
+		out.Write(nal.Data) // write bitstream
+
+		fmt.Printf("Frame:%s Slice:%s Data:%v(%d)\n", nal.NALUnit, nal.Slice, nal.Data[0:10], len(nal.Data))
+		// => Frame:IDR Slice:I Data:[0 0 0 21 50 0 128 0 0 0](1234567)
 
 		for idx, nal := range nal.SplitNAL() {
 			fmt.Printf("  [%d] type=%s (%d)\n", idx, nal.NALType, len(nal.Data))
 		}
 		// =>  [0] type=SPS (21)
 		// =>  [1] type=PPS (4)
-		// =>  [2] type=SEI (1259)
-		// =>  [3] type=IDR (12345678)
+		// =>  [2] type=SEI (1234)
+		// =>  [3] type=IDR (1233308)
+	}
+
+	nal, err := encoder.Flush()
+	if err != nil {
+		panic(err)
+	}
+	defer nal.Close()
+
+	if nal.HasData() {
+		out.Write(nal.Data)
+		fmt.Printf("[flush] Frame:%s Slice:%s Data:%v(%d)\n", nal.NALUnit, nal.Slice, nal.Data[0:10], len(nal.Data))
+		// => [flush] Frame:NonIDR Slice:P Data:[0 0 0 18 3 0 164 172 64 0](22)
 	}
 }
 
@@ -82,7 +99,6 @@ func createParam(width, height int) *xeve.BaselineParam {
 
 	param.SetPresetTune(xeve.PresetFast, xeve.TuneNone)
 	param.SetInputSize(width, height)
-	param.SetInputColorFormat(xeve.ColorFormatYCbCr420, 8)
 	param.SetFramerate(30, 60)
 	param.SetBitrate(2000)
 	param.SetGOP(xeve.GOPClosed)
@@ -93,5 +109,9 @@ func createParam(width, height int) *xeve.BaselineParam {
 
 func loadExampleData() (*image.YCbCr, error) {
 	// load YCbCr420 image ...
+}
+
+func newBitstreamWriter() io.Writer {
+	// bitstream writer ...
 }
 ```

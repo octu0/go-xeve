@@ -23,11 +23,6 @@ int xeveb_param_set_input_size(XEVE_PARAM *param, int32_t width, int32_t height)
   return 0;
 }
 
-int xeveb_param_set_input_color_format(XEVE_PARAM *param, int32_t color_format, int32_t bit_depth) {
-  param->cs = XEVE_CS_SET(color_format, bit_depth, 0);
-  return 0;
-}
-
 int xeveb_param_set_framerate(XEVE_PARAM *param, int32_t fps, int32_t keyint) {
   param->fps = fps;
   param->keyint = keyint;
@@ -86,7 +81,7 @@ XEVE_PARAM *xeveb_default_param() {
     return NULL;
   }
 
-  param->cs = XEVE_CS_YCBCR420;
+  param->closed_gop = 1;
   return param;
 }
 
@@ -96,6 +91,7 @@ void xeveb_free_xeve(XEVE id) {
 
 XEVE xeveb_create(XEVE_PARAM *param, int32_t max_bitstream_buffer_size) {
   XEVE_CDSC cdsc;
+  memset(&cdsc, 0, sizeof(XEVE_CDSC));
   cdsc.max_bs_buf_size = max_bitstream_buffer_size;
   memcpy(&cdsc.param, param, sizeof(XEVE_PARAM));
 
@@ -152,7 +148,9 @@ XEVE_IMGB *xeveb_create_imgb(
   int32_t stride_v,
   int32_t size_y,
   int32_t size_u,
-  int32_t size_v
+  int32_t size_v,
+  uint8_t color_format,
+  uint8_t bit_depth
 ) {
   XEVE_IMGB *imgb = (XEVE_IMGB *) malloc(sizeof(XEVE_IMGB));
   if(NULL == imgb) {
@@ -177,7 +175,7 @@ XEVE_IMGB *xeveb_create_imgb(
   imgb->y[2] = 0;
   imgb->w[0] = param->w;
   imgb->h[0] = param->h;
-  imgb->cs = param->cs;
+  imgb->cs = XEVE_CS_SET(color_format, bit_depth, 0);
 
   switch(XEVE_CS_GET_FORMAT(param->cs)) {
   case XEVE_CF_YCBCR400:
@@ -216,16 +214,20 @@ XEVE_IMGB *xeveb_create_imgb(
   return imgb;
 }
 
+int xeveb_bump(XEVE id, XEVE_BITB *bitb) {
+  int val  = 1;
+  int size = sizeof(int);
+  return xeve_config(id, XEVE_CFG_SET_FORCE_OUT, (void *)(&val), &size);
+}
+
+int xeveb_push(XEVE id, XEVE_IMGB *imgb) {
+  return xeve_push(id, imgb);
+}
+
 xeveb_encode_result_t *xeveb_encode(
   XEVE id,
-  XEVE_BITB *bitb,
-  XEVE_IMGB *imgb
+  XEVE_BITB *bitb
 ) {
-  int ret_push = xeve_push(id, imgb);
-  if(XEVE_FAILED(ret_push)) {
-    return NULL;
-  }
-
   XEVE_STAT stat;
   memset(&stat, 0, sizeof(XEVE_STAT));
 

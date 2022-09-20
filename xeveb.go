@@ -53,16 +53,6 @@ func (p *BaselineParam) SetInputSize(width, height int) bool {
 	return Succeed(rc)
 }
 
-func (p *BaselineParam) SetInputColorFormat(colorFormat ColorFormatType, bitDepth int) bool {
-	ret := int(C.xeveb_param_set_input_color_format(
-		(*C.XEVE_PARAM)(p.paramPtr),
-		C.int(colorFormat),
-		C.int(bitDepth),
-	))
-	rc := ReturnCode(ret)
-	return Succeed(rc)
-}
-
 func (p *BaselineParam) SetFramerate(fps, keyint int) bool {
 	ret := int(C.xeveb_param_set_framerate(
 		(*C.XEVE_PARAM)(p.paramPtr),
@@ -160,10 +150,38 @@ type BaselineEncoder struct {
 	param  *BaselineParam
 	bitb   unsafe.Pointer // *XEVE_BITB
 	closed int32
+	bumped int32
 }
 
-func (e *BaselineEncoder) Encode(y, u, v []byte, strideY, strideU, strideV int) (*NALUnit, error) {
-	if atomic.LoadInt32(&e.closed) == 1 {
+func (e *BaselineEncoder) isClosed() bool {
+	return atomic.LoadInt32(&e.closed) == 1
+}
+
+func (e *BaselineEncoder) isBumped() bool {
+	return atomic.LoadInt32(&e.bumped) == 1
+}
+
+func (e *BaselineEncoder) encode() (*NALUnit, error) {
+	ret := unsafe.Pointer(C.xeveb_encode(
+		(C.XEVE)(e.id),
+		(*C.XEVE_BITB)(e.bitb),
+	))
+	if ret == nil {
+		return nil, fmt.Errorf("failed to call xeveb_encode()")
+	}
+
+	result := (*C.xeveb_encode_result_t)(ret)
+	defer C.xeveb_free_result(result)
+
+	if Ok != int(result.status) {
+		return &NALUnit{}, nil
+	}
+
+	return e.copyNALUnit(result)
+}
+
+func (e *BaselineEncoder) Encode(y, u, v []byte, strideY, strideU, strideV int, colorFormat ColorFormatType, bitDepth BitDepthType) (*NALUnit, error) {
+	if e.isClosed() {
 		return nil, fmt.Errorf("encoder closed")
 	}
 
@@ -178,29 +196,41 @@ func (e *BaselineEncoder) Encode(y, u, v []byte, strideY, strideU, strideV int) 
 		C.int(len(y)),
 		C.int(len(u)),
 		C.int(len(v)),
+		C.uchar(colorFormat),
+		C.uchar(bitDepth),
 	))
 	if imgb == nil {
 		return nil, fmt.Errorf("failed to call xeveb_create_imgb()")
 	}
 	defer C.xeveb_free_imgb((*C.XEVE_IMGB)(imgb))
 
-	ret := unsafe.Pointer(C.xeveb_encode(
+	ret := int(C.xeveb_push(
 		(C.XEVE)(e.id),
-		(*C.XEVE_BITB)(e.bitb),
 		(*C.XEVE_IMGB)(imgb),
 	))
-	if ret == nil {
-		return nil, fmt.Errorf("failed to call xeveb_encode()")
+	if Failed(ReturnCode(ret)) {
+		return &NALUnit{}, fmt.Errorf("failed to call xeveb_push()")
+	}
+	return e.encode()
+}
+
+func (e *BaselineEncoder) Flush() (*NALUnit, error) {
+	if e.isClosed() {
+		return nil, fmt.Errorf("encoder closed")
 	}
 
-	result := (*C.xeveb_encode_result_t)(ret)
-	defer C.xeveb_free_result(result)
-
-	if Ok != int(result.status) {
-		return &NALUnit{}, nil
+	if atomic.CompareAndSwapInt32(&e.bumped, 0, 1) != true {
+		return nil, fmt.Errorf("already bumped")
 	}
 
-	return e.copyNALUnit(result)
+	ret := int(C.xeveb_bump(
+		(C.XEVE)(e.id),
+		(*C.XEVE_BITB)(e.bitb),
+	))
+	if Failed(ReturnCode(ret)) {
+		return &NALUnit{}, fmt.Errorf("failed to call xeveb_bump()")
+	}
+	return e.encode()
 }
 
 func (e *BaselineEncoder) copyNALUnit(result *C.xeveb_encode_result_t) (*NALUnit, error) {
@@ -223,14 +253,17 @@ func (e *BaselineEncoder) Close() {
 	if atomic.CompareAndSwapInt32(&e.closed, 0, 1) {
 		runtime.SetFinalizer(e, nil)
 
-		e.param.Close()
+		// bump not yet
+		if atomic.CompareAndSwapInt32(&e.bumped, 0, 1) {
+			C.xeveb_free_xeve(
+				(C.XEVE)(e.id),
+			)
+		}
 
-		C.xeveb_free_xeve(
-			(C.XEVE)(e.id),
-		)
 		C.xeveb_free_bitb(
 			(*C.XEVE_BITB)(e.bitb),
 		)
+		e.param.Close()
 	}
 }
 
@@ -262,6 +295,7 @@ func CreateBaselineEncoder(param *BaselineParam) (*BaselineEncoder, error) {
 		param:  param,
 		bitb:   bitb,
 		closed: 0,
+		bumped: 0,
 	}
 	runtime.SetFinalizer(e, finalizeBaselineEncoder)
 	return e, nil

@@ -93,6 +93,14 @@ const (
 	ColorFormatYCbCr422W = 18 // YCbCr 422 wide chroma
 )
 
+type BitDepthType uint8
+
+const (
+	BitDepth8  BitDepthType = 8
+	BitDepth10              = 10
+	BitDepth12              = 12
+)
+
 type ConfigType uint16
 
 const (
